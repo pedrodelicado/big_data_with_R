@@ -352,6 +352,7 @@ ORDER BY n_orders
 "
 
 data <- list(productId = 24852)
+#data <- list(productId = 8991)
 
 product_times_ordered_txt %>%
   whisker.render(data) %>%
@@ -368,13 +369,48 @@ product_times_ordered_txt %>%
 
 ## Questions
 
-* For given department, plot the most popular product (with templating department).
+* For given department, give the list of the 10 most popular product (with templating department).
 
+```{r}
+library(whisker)
+library(magrittr)
 
-* For given day, rank department popularity.
+product_times_ordered_by_department_txt <- "
+SELECT op.product_id
+,   o.product_name
+,   COUNT(1) AS n_orders
+FROM (
+    SELECT product_id
+    FROM order_products__prior_tbl
+    ) op
+LEFT JOIN (
+    SELECT product_id
+    ,   product_name
+    ,   department_id
+    FROM products_tbl
+) o
+ON op.product_id = o.product_id
+WHERE department_id == {{departmentID}}
+GROUP BY op.product_id, o.product_name
+ORDER BY n_orders DESC
+LIMIT 10
+"
+
+data <- list(departmentID = "19")
+
+product_times_ordered_by_department_txt %>%
+  whisker.render(data) %>%
+  cat
+```
+```{r}
+product_times_ordered_by_department_txt %>%
+  whisker.render(data) %>%
+  dbGetQuery(sc, .)
+```
+
+* For given day of the week, rank department popularity.
 
 ## More on orders (Window Functions)
-
 
 
 ```{r}
@@ -395,6 +431,8 @@ FROM orders_tbl
 WHERE user_id <= 10
 ")
 ```
+En la próxima query usamos una window function, con el OVER(PARTITION by ...)
+
 ```{r}
 dbGetQuery(sc, 
 "SELECT user_id
@@ -404,4 +442,101 @@ FROM orders_tbl
 WHERE user_id <= 10 
 ")
 ```
+SI QUEREMOS HACER LA PARTICIÓN TAMBIÉN POR AÑO:
+FIRST_VALUE(order_id)  OVER(partition by user_id, year ORDER BY order_number) AS first_order
 
+
+* Product that is usually orders in numerous baskets
+
+```{r}
+"
+SELECT product_id
+,   AVG(products_number) AS avg_products_number
+FROM (
+    SELECT order_id
+    ,   product_id
+    ,   COUNT(product_id)  OVER(partition by order_id) AS products_number
+    FROM order_products__train_tbl
+) pn
+GROUP BY product_id
+ORDER BY avg_products_number DESC
+LIMIT 100
+" %>%
+dbGetQuery(sc, .)
+```
+
+* Could modify the query and add prduct name?
+
+```{r}
+"
+SELECT op.product_id
+,   p.product_name
+,   op.avg_products_number
+FROM 
+  (SELECT product_id
+  ,   AVG(products_number) AS avg_products_number
+  FROM (
+    SELECT order_id
+    ,   product_id
+    ,   COUNT(product_id)  OVER(partition by order_id) AS products_number
+    FROM order_products__train_tbl
+  ) pn
+  GROUP BY product_id
+  ORDER BY avg_products_number DESC) op
+LEFT JOIN (
+    SELECT product_id
+    ,   product_name
+    FROM products_tbl) p
+ON op.product_id = p.product_id
+LIMIT 100
+" %>%
+dbGetQuery(sc, .)
+```
+Ahora buscamos los productos asociados a las listas de la compra más cortas
+
+```{r}
+"
+SELECT op.product_id
+,   p.product_name
+,   op.avg_products_number
+FROM 
+  (SELECT product_id
+  ,   AVG(products_number) AS avg_products_number
+  FROM (
+    SELECT order_id
+    ,   product_id
+    ,   COUNT(product_id)  OVER(partition by order_id) AS products_number
+    FROM order_products__train_tbl
+  ) pn
+  GROUP BY product_id
+  ORDER BY avg_products_number ASC) op
+LEFT JOIN (
+    SELECT product_id
+    ,   product_name
+    FROM products_tbl) p
+ON op.product_id = p.product_id
+LIMIT 100
+" %>%
+dbGetQuery(sc, .)
+```
+
+
+
+* For 10 first users and all their orders find days since first order 
+```{r}
+dbGetQuery(sc, 
+"SELECT * 
+FROM orders_tbl
+WHERE user_id <= 10
+ORDER BY user_id, order_number
+")
+```
+```{r}
+dbGetQuery(sc, 
+"SELECT user_id
+,   order_id
+,   FIRST_VALUE(order_id)  OVER(partition by user_id ORDER BY order_number) AS first_order
+FROM orders_tbl
+WHERE user_id <= 10 
+")
+```
